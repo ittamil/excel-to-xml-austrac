@@ -3,7 +3,8 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 import io
 from utils import ConvertDateFormat
-
+import datetime
+import os
 app = Flask(__name__)
 
 @app.route('/')
@@ -19,7 +20,6 @@ def upload_file():
     #file_name = request.form['filename']
     renumber = request.form['renumber']
     file_name = f"TTR-MSB{str(pd.Timestamp.now().strftime('%Y%m%d%H%M'))}.xml"
-
 
     if file.filename == '':
         return render_template('index.html', error="No file selected")
@@ -48,12 +48,31 @@ def convert_to_xml(dataframe,file_name,renumber):
     root = ET.Element('ttr-msbList', xmlns="http://austrac.gov.au/schema/reporting/TTR-MSB-2-0")
     ET.SubElement(root,"reNumber").text = str(renumber)
     ET.SubElement(root,"fileName").text = str(file_name)
+    ET.SubElement(root,"reportCount").text = str(1)
 
     dataframe.columns = dataframe.columns.str.strip().str.lower().str.replace(" ","")
     
-    for _, row in dataframe.iterrows():
-    
+    d = dataframe["receiptno."]
+    num_dict = {}
+
+    for num in list(d):
+        if num in num_dict:
+            num_dict[num] += 1
+        else:
+            num_dict[num] = 1
+
+    for k,v in num_dict.items():
+        filtered_rows = dataframe[dataframe["receiptno."] == k]
+        row = filtered_rows.iloc[0]
+        # print(s["comments"])
+        # for _, row in filtered_rows.iterrows():
+        #     print(row["localamount"])
+
+    # for _, row in dataframe.iterrows():
+        
+        # print(row["receiptno."])
         ttr_msb = ET.SubElement(root, 'ttr-msb')
+        ttr_msb.set('id', "rpt-01")
             
         ''' --> header  '''
         header = ET.SubElement(ttr_msb, 'header')
@@ -72,10 +91,8 @@ def convert_to_xml(dataframe,file_name,renumber):
                 --> header tree (reportingBranch)
                     -->  reportingBranch tree
         '''
-        branchId = ET.SubElement(reportingBranch, 'branchId')
         
         ET.SubElement(reportingBranch, 'name').text = str(row["firstname"])
-
 
         header_address = ET.SubElement(reportingBranch, 'address')
         header_address.set('id', "adr-01-01")
@@ -86,13 +103,28 @@ def convert_to_xml(dataframe,file_name,renumber):
                     --> header address tree
         '''
         ET.SubElement(header_address, 'addr').text = str(row["address1"])
+        s = row["citytown"]
+        suburb = str(s).split()
+        try:
+            s1 = suburb[0]
+        except:
+            s1 = None
+        
+        try:
+            s2 = suburb[1]
+        except:
+            s2 = None
 
-        suburb = ET.SubElement(header_address, 'suburb').text = str(row["citytown"])
+        try:
+            s3 = suburb[2]
+        except:
+            s3 = None
+        
+        suburb = ET.SubElement(header_address, 'suburb').text = str(s1)
 
-        state = ET.SubElement(header_address, 'state').text = str(row["citytown"])
+        state = ET.SubElement(header_address, 'state').text = str(s2)
 
-
-        postcode = ET.SubElement(header_address, 'postcode')
+        postcode = ET.SubElement(header_address, 'postcode').text = str(s3)
         
         ''' 
             --> customer
@@ -112,23 +144,38 @@ def convert_to_xml(dataframe,file_name,renumber):
         indOcc = ET.SubElement(customer, 'indOcc')
         indOcc.set('id', "ioc-01-01")
 
-        ET.SubElement(customer, 'dob').text = str(ConvertDateFormat(str(row["dateofbirth"])))
+        dobt = row["dateofbirth"]
+        dobtconv = datetime.datetime.strptime(dobt, "%d/%m/%Y").strftime("%Y-%m-%d")
+
+        ET.SubElement(customer, 'dob').text = str(dobtconv)
 
         identification = ET.SubElement(customer, 'identification')
         identification.set('id', "idt-01-01")
 
-        electDataSrc = ET.SubElement(customer, 'electDataSrc')
+        customeridtype = str(row["customeridtype"]).strip().lower().replace(" ","")
+        if customeridtype == "passport":
+            ET.SubElement(customer, 'electDataSrc').text = str("P")
+        if customeridtype == "drivinglicense":
+            ET.SubElement(customer, 'electDataSrc').text = str("D")
+        else:
+            _type = ET.SubElement(customer, 'electDataSrc')
+
+
 
         ''' --> customer
                 -- > customer address tree (customer_mainAddress)
         '''
         ET.SubElement(customer_mainAddress, 'addr').text = str(row["address1"])
 
-        ET.SubElement(customer_mainAddress, 'suburb').text = str(row["citytown"])
+        ET.SubElement(customer_mainAddress, 'suburb').text = str(s1)
 
-        ET.SubElement(customer_mainAddress, 'state').text = str(row["citytown"])
+        ET.SubElement(customer_mainAddress, 'state').text = str(s2)
 
-        postcode = ET.SubElement(customer_mainAddress, 'postcode')
+        ET.SubElement(customer_mainAddress, 'postcode').text = str(s3)
+
+        ET.SubElement(customer_mainAddress, 'country').text = str(row["country"])
+
+     
 
         '''
             --> customer
@@ -142,10 +189,9 @@ def convert_to_xml(dataframe,file_name,renumber):
                 -->  identification tree (identification)
         '''
         customeridtype = str(row["customeridtype"]).strip().lower().replace(" ","")
-
         if customeridtype == "passport":
             ET.SubElement(identification, 'type').text = str("P")
-        if customeridtype == "driving":
+        if customeridtype == "drivinglicense":
             ET.SubElement(identification, 'type').text = str("D")
         else:
             _type = ET.SubElement(identification, 'type')
@@ -175,12 +221,12 @@ def convert_to_xml(dataframe,file_name,renumber):
         '''
         ET.SubElement(individual_mainAddress, 'addr').text = str(row["address1"])
         
-        ET.SubElement(individual_mainAddress, 'suburb').text = str(row["citytown"])
+        ET.SubElement(individual_mainAddress, 'suburb').text = str(s1)
 
-        ET.SubElement(individual_mainAddress, 'state').text = str(row["citytown"])
+        ET.SubElement(individual_mainAddress, 'state').text = str(s2)
 
-
-        postcode = ET.SubElement(individual_mainAddress, 'postcode')
+        ET.SubElement(individual_mainAddress, 'postcode').text = str(s3)
+        
         ET.SubElement(individual_mainAddress, 'country').text = str(row["country"])
 
         '''
@@ -194,7 +240,7 @@ def convert_to_xml(dataframe,file_name,renumber):
                 --> recipient tree (recipient)
         '''
         sameAsCustomer = ET.SubElement(recipient, 'sameAsCustomer')
-        sameAsCustomer.set('id', "cst-01-01")
+        sameAsCustomer.set('refId', "cst-01-01")
         
         '''
             --> transaction
@@ -206,13 +252,17 @@ def convert_to_xml(dataframe,file_name,renumber):
             --> transaction
                 --> transaction tree (transaction)
         '''
-        ET.SubElement(transaction, 'Transactiondate').text = str(ConvertDateFormat(str(row["transactiondate"])))
+        ET.SubElement(transaction, 'txnDate').text = str(ConvertDateFormat(str(row["transactiondate"])))
 
 
         totalAmount = ET.SubElement(transaction, 'totalAmount')
-        transaction.set('id', "tam-01-01")
+        totalAmount.set('id', "tam-01-01")
 
-        designatedSvc = ET.SubElement(transaction, 'designatedSvc')
+        currency = ET.SubElement(totalAmount, 'currency').text = str("AUD")
+        ET.SubElement(totalAmount, 'amount').text = str(row["localamount"])
+
+        designatedSvc = ET.SubElement(transaction, 'designatedSvc').text = str("CUR_EXCH")
+        
         moneyReceived = ET.SubElement(transaction, 'moneyReceived')
         moneyReceived.set('id', "mrv-01-01")
 
@@ -224,16 +274,11 @@ def convert_to_xml(dataframe,file_name,renumber):
                 --> transaction tree (transaction_
                     --> total amount tree (totalamont)
         '''
-        currency = ET.SubElement(totalAmount, 'currency')
-        ET.SubElement(totalAmount, 'amount').text = str(row["localamount"])
-
-
         '''
             --> transaction
                 --> transaction tree (transaction)
                     --> money received tree (moneyReceived)
         '''
-        cash = ET.SubElement(moneyReceived, 'cash')
 
         '''
             --> transaction
@@ -241,19 +286,21 @@ def convert_to_xml(dataframe,file_name,renumber):
                     --> money received tree (moneyReceived)
                         --> cash tree (cash)
         '''
-        foreignCash = ET.SubElement(cash, 'foreignCash')
-        foreignCash.set('id', "fca-01-01")
+        
+        moneyReceived_cash = ET.SubElement(moneyReceived, 'cash')
+        for i in range(len(filtered_rows)):
+            print(filtered_rows.iloc[i]['fxamount'])
 
-        '''
-            --> transaction
-                --> transaction tree (transaction)
-                    --> money received tree (moneyReceived)
-                        --> cash tree (cash)
-                            --> foreignCash tree (foreignCash)
-        '''
-        ET.SubElement(foreignCash, 'currency').text = str(row["currencycode"])
+        # for _, row in filtered_rows.iterrows():
+            # print(_)
 
-        amount = ET.SubElement(foreignCash, 'amount')
+            foreignCash = ET.SubElement(moneyReceived_cash, 'foreignCash')
+            foreigncash_id = str("fca-01-") + str(i+1).zfill(2)
+            foreignCash.set('id', foreigncash_id)
+
+            ET.SubElement(foreignCash, 'currency').text = str(filtered_rows.iloc[i]["currencycode"])
+
+            amount = ET.SubElement(foreignCash, 'amount').text = str(filtered_rows.iloc[i]["fxamount"])
 
         # ET.SubElement(amount, col).text = str(row["loca"])
 
@@ -263,7 +310,13 @@ def convert_to_xml(dataframe,file_name,renumber):
                 --> transaction tree (transaction)
                     --> money providerd tree (moneyProvided)
         '''
-        money_provided_cash = ET.SubElement(moneyProvided, 'cash')
+        moneyProvided_cash = ET.SubElement(moneyProvided, 'cash')
+        mpauscash = ET.SubElement(moneyProvided_cash, 'ausCash')
+        mpauscash.set('id', "csh-01-01")
+        ET.SubElement(mpauscash, 'currency').text = str("AUD")
+        ET.SubElement(mpauscash, 'amount').text = str(row["localamount"])
+        
+        
         nonCashProvided = ET.SubElement(moneyProvided, 'nonCashProvided')
 
         '''
@@ -272,8 +325,7 @@ def convert_to_xml(dataframe,file_name,renumber):
                     --> money providerd tree (moneyProvided)
                         -->  cash tree (money_provided_cash)
         '''
-        moneyProvided = ET.SubElement(money_provided_cash, 'moneyProvided')
-        moneyProvided.set('id', "csh-01-01")
+        
 
         '''
             --> transaction
@@ -281,8 +333,7 @@ def convert_to_xml(dataframe,file_name,renumber):
                     --> money providerd tree (moneyProvided)
                         -->  cash tree (money_provided_cash)
         '''
-        currency = ET.SubElement(moneyProvided, 'currency')
-        amount = ET.SubElement(moneyProvided, 'amount')
+        
 
         '''
             --> transaction
@@ -290,7 +341,7 @@ def convert_to_xml(dataframe,file_name,renumber):
                     --> money providerd tree (moneyProvided)
                         --> non cash provided tree (fco)
         '''
-        fco = ET.SubElement(nonCashProvided, 'fco')
+        # fco = ET.SubElement(nonCashProvided, 'fco')
 
         '''
             --> transaction
@@ -299,7 +350,7 @@ def convert_to_xml(dataframe,file_name,renumber):
                         --> non cash provided tree (fco)
                             -->  (fco)
         '''
-        amount = ET.SubElement(fco, 'amount')
+        # amount = ET.SubElement(fco, 'amount')
 
     # dataframe.columns = dataframe.columns.str.strip().str.lower().str.replace(" ","")
     
@@ -314,6 +365,7 @@ def convert_to_xml(dataframe,file_name,renumber):
     xml_data = ET.tostring(root, encoding='unicode')
     return xml_data
 
+
 @app.route('/download')
 def download_xml():
     xml_data = request.args.get('xml_data', '')
@@ -326,4 +378,3 @@ def download_xml():
 
 if __name__ == '__main__':
     app.run(debug=True, port=os.getenv("PORT", default=5000))
-
